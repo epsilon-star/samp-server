@@ -14,5 +14,5 @@
 
 
 ## Telegram Channel & Supporter
-- Telegram Channel : @shadowteam_official
-- Supporter : @shadowteam_support
+- Telegram Channel : `@shadowteam_official`
+- Supporter : `@shadowteam_support`
