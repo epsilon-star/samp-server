@@ -1,9 +1,9 @@
 //========---- INCLUDE ----========//
 #include 				<a_samp>
 #include 				<a_mysql>
-#include 				<sscanf2>
-#include 				<pawn.cmd>
 // #include 			<sqlitei>
+#include 				<Pawn.CMD>
+#include				<sscanf2>
 // YSI
 #include 				<YSI_Coding/y_va>
 //==========-------------==========//
@@ -14,17 +14,17 @@
 #if defined MAX_PLAYERS
 #undef MAX_PLAYERS
 #endif
-#define MAX_PLAYERS				200
-#define MAX_DIALOGS 			12000
-#define MAX_LOGIN_ATTEMPTS 		5
-#define MAX_ADMIN_ATTEMPTS 		5
+#define MAX_PLAYERS			200
+#define MAX_DIALOGS 		12000
+#define MAX_LOGIN_ATTEMPTS 	5
+#define MAX_COMMANDS 		2000
 // defination of function
 #define function%0(%1) forward %0(%1);public %0(%1)
 // mysql var
-#define SQL_HOST 				"localhost"
-#define SQL_USER 				"root"
-#define SQL_PASS 				""
-#define SQL_DATA 				"shadowdb"
+#define SQL_HOST 			"localhost"
+#define SQL_USER 			"root"
+#define SQL_PASS 			""
+#define SQL_DATA 			"shadowteam"
 // Script
 #define SFM SendFormatMessage
 //==========-------------==========//
@@ -41,8 +41,9 @@ enum dialogids {
 	DIALOG_REGISTER_GENDER,
 	DIALOG_REGISTER_EMAIL,
 	DIALOG_REGISTER_REFERRAL,
-
+	
 	DIALOG_ADMIN_LOGIN,
+	DIALOG_ADMIN_CHANGECODE
 };
 
 enum diTable {
@@ -63,10 +64,24 @@ new DialogTable[][diTable] = {
 	{DIALOG_STYLE_INPUT,	"[ShadowTeam] Register (Email)","Please Enter Your Email Here Or Simply Type 'skip' For Skiping This Stage","Next","Prevoius"},
 	{DIALOG_STYLE_INPUT,	"[ShadowTeam] Register (Refferal)","Please Enter Your Refferal Here","Verify","Skip"},
 
-	{DIALOG_STYLE_INPUT,	"[ShadowTeam] Admin (Login)","Please Enter Your Admin-Code Here","Login","Cancel"}
+	{DIALOG_STYLE_PASSWORD,	"[ShadowTeam] Admin (Login)","Please Enter Your Admin Code To Verify That You're And Authurized Admin By Owner !","Login","Cnacel"},
+	{DIALOG_STYLE_INPUT,	"[ShadowTeam] Admin (ChangeCode)","Please Enter Your New Code","Change","Cancel"}
 };
 
 new MySQL:mysql;
+
+enum cmdInfo {
+	cmdID,
+	cmdText[20],
+	cmdArgs[50],
+	cmdParams[20],
+	cmdDesc[256],
+	cmdLock,
+	cmdOOnly,
+	cmdAdmin,
+	cmdAuth
+}; 
+new Commands[MAX_COMMANDS][cmdInfo];
 
 enum pInfo {
 
@@ -78,11 +93,9 @@ enum pInfo {
 	pName[50],
 	pRegistered,
 	pRegisterLevel,
-
 	pAdminLevel,
 	pAdminCode,
-	pAdminBPoints,
-
+	pAdminLogin,
 	pGender,
 	pAge,
 	pBan,
@@ -92,11 +105,10 @@ enum pInfo {
 
 	// In-Game (cache)
 	bool:pLogged,
-	bool:pAdminLogin,
 	bool:pSpawned,
 	pFName[50],
 	pLoginAttempts,
-	pAdminAttempts,
+	pALoginAttemtps
 };
 new PlayerInfo[MAX_PLAYERS][pInfo];
 //==========-------------==========//
@@ -149,7 +161,7 @@ stock SendFormatMessage(playerid,tmptype,const message[],GLOBAL_TAG_TYPES:...) {
 
 stock KickPlayerEx(playerid,const reason[],GLOBAL_TAG_TYPES:...) {
 	SFM(playerid,msgError,va_return(reason,___(2)));
-	return SetTimerEx("Kick",1000,false,"i",playerid);
+	SetTimerEx("Kick",1000,false,"i",playerid);
 }
 
 stock CreateDialog(playerid,dialogids:dialogid,const addon_title[] = "",const addon_caption[] = "") {
@@ -170,11 +182,9 @@ stock ResetPlayerData(playerid) {
 	PlayerInfo[playerid][pName] = 0;
 	PlayerInfo[playerid][pRegistered] = 0;
 	PlayerInfo[playerid][pRegisterLevel] = 0;
-
 	PlayerInfo[playerid][pAdminLevel] = 0;
+	PlayerInfo[playerid][pAdminLogin] = 0;
 	PlayerInfo[playerid][pAdminCode] = 0;
-	PlayerInfo[playerid][pAdminBPoints] = 0;
-
 	PlayerInfo[playerid][pGender] = 0;
 	PlayerInfo[playerid][pAge] = 0;
 	PlayerInfo[playerid][pBan] = 0;
@@ -186,9 +196,6 @@ stock ResetPlayerData(playerid) {
 	PlayerInfo[playerid][pFName] = 0;
 	PlayerInfo[playerid][pLoginAttempts] = 0;
 
-	PlayerInfo[playerid][pAdminLogin] = false;
-	PlayerInfo[playerid][pAdminAttempts] = 0;
-
 	return 1;
 }
 stock SavePlayerDatas(playerid) {
@@ -197,27 +204,61 @@ stock SavePlayerDatas(playerid) {
 }
 
 new adminlevel_names[][] = {
-	"NON-ADMIN", 			// 0
-	"Admin (1)", 			// 1
-	"Admin (2)", 			// 2
-	"Admin (3)", 			// 3
-	"Admin (4)", 			// 4
-	"Admin (Head)", 		// 5
-	"Host (1)",				// 6
-	"Host (2)",				// 7
-	"Host (3)", 			// 8
-	"MGMT (Supervisor)",	// 9
-	"MGMT (Manager)", 		// 10
-	"MGMT (Founder)", 		// 11
-	"DEV (Contriver)", 		// 12
-	"DEV (Scripter)",		// 13
-	"Owner (EPSILON)"		// 14
-};
+	"NON-ADMIN",
+	"Admin (1)",
+	"Admin (2)",
+	"Admin (3)",
+	"Admin (4)",
+	"Admin (Head)",
+	"Host (1)",
+	"Host (2)",
+	"MGMT (Supervisor)",
+	"MGMT (Manager)",
+	"MGMT (Founder)",
+	"DEV (Configer)",
+	"DEV (Scripter)",
+	"Owner (EPSILON)"
+}
 
 stock GetAdminName(level) {
-	new tmpname[50];
-	if(0 <= level < sizeof(adminlevel_names)) format(tmpname,sizeof tmpname,adminlevel_names[level]);
-	return tmpname;
+	if(level >= 0 && level < sizeof(adminlevel_names)) return adminlevel_names[level];
+	else return 0;
+}
+//==========-------------==========//
+
+
+//========---- CMD CONFIG ----========//
+stock GetCommandIndex(cmdtext[]) {
+	output = 0;founded = 0;
+	for(new x;x<MAX_COMMANDS;x++) {
+		if(strlen(Commands[x][cmdText]) == strlen(cmdtext) && strcmp(cmdtext,Commands[x][cmdText],true) == 0) {
+			founded = 1;output = x;break;
+		}
+	}
+	if(founded == 1) return output;
+	else return -1;
+}
+public OnPlayerCommandReceived(playerid, cmd[], params[], flags) {
+	new tmpidx = GetCommandIndex(cmd),tmpfound = (tmpidx != 1) ? 1:0;
+	// for(new x=0;x<MAX_COMMANDS;x++) {
+	// 	if(strlen(Commands[x][cmdText]) == strlen(cmd) && strcmp(cmd,Commands[x][cmdText],true) == 0) {
+	// 		tmpfound = 1;tmpidx = x;break;
+	// 	}
+	// }
+	if(tmpfound == 1) {
+		if(Commands[tmpidx][cmdLock] == 1) return SFM(playerid,msgError,"This Command Is Locked By Server Developer");
+		else if(Commands[tmpidx][cmdOOnly] == 1) return SFM(playerid,msgError,"This Command Is Flagged As (OwnerOnly)");
+		else if(Commands[tmpidx][cmdAdmin] > 0) {
+			if(Commands[tmpidx][cmdAuth] == 1 && PlayerInfo[playerid][pAdminLogin] != 1) return SFM(playerid,msgError,"To Use This Command You Must Auth Your AdminLevel First Using /adminlogin [code]");
+			else if(PlayerInfo[playerid][pAdminLevel] < 0) return SFM(playerid,msgError,"You're Not An Admin Of Server !");
+			else if(PlayerInfo[playerid][pAdminLevel] < Commands[tmpidx][cmdAdmin]) return SFM(playerid,msgError,"You're Not Authorized To Use This Command!");
+		}
+	} else return SFM(playerid,msgError,"Command [%s] Is Not Founded Or Its Not-Registered Yet !",cmd);
+	return 1;
+}
+public OnPlayerCommandPerformed(playerid, cmd[], params[], result, flags) {
+	if(!result) return SFM(playerid,msgError,"Command Does Not Work, Please Consider Using Right Arguments In Call Time");
+	return 1;
 }
 //==========-------------==========//
 
@@ -233,24 +274,61 @@ function LoadDatabase() {
 	cache_get_row_count(idxs);
 	printf("[ShadowTeam] Total User Count [-%d-]",idxs);
 
+
 	// bans
 	tmpcache = mysql_query(mysql,"select * from bans order by username asc");
 	cache_get_row_count(idxs);
 	printf("[ShadowTeam] Total Banned Users [-%d-]",idxs);
+
 
 	// banip
 	tmpcache = mysql_query(mysql,"select * from banips order by ip asc");
 	cache_get_row_count(idxs);
 	printf("[ShadowTeam] Total Banned IPs [-%d-]",idxs);
 
-	// admins
-	tmpcache = mysql_query(mysql,"select * from admins order by username asc");
+
+	// cmds
+	tmpcache = mysql_query(mysql,"select * from cmds order by id asc");
 	cache_get_row_count(idxs);
-	printf("[ShadowTeam] Total Server Admins [-%d-]",idxs);
+	printf("[ShadowTeam] Total Server Commands [-%d-]",idxs);
 	
 	// delete the cache
 	cache_delete(tmpcache);
 	printf("\\============================/");
+	return 1;
+}
+
+function LoadServerCommands() {
+
+	for(new x;x<MAX_COMMANDS;x++) {
+		Commands[x][cmdID] = 0;
+		Commands[x][cmdText] = 0;
+		Commands[x][cmdArgs] = 0;
+		Commands[x][cmdParams] = 0;
+		Commands[x][cmdDesc] = 0;
+		Commands[x][cmdLock] = 0;
+		Commands[x][cmdOOnly] = 0;
+		Commands[x][cmdAdmin] = 0;
+		Commands[x][cmdAuth] = 0;
+	}
+
+	new tmpidx=0;
+	new Cache:tmpcache = mysql_query(mysql,"select * from cmds order by id asc");
+	cache_get_row_count(tmpidx);
+	if(tmpidx) {
+		for(new x=0;x<tmpidx;x++) {
+			cache_get_value_int(x,"id",Commands[x][cmdID]);
+			cache_get_value(x,"text",Commands[x][cmdText],20);
+			cache_get_value(x,"args",Commands[x][cmdArgs],50);
+			cache_get_value(x,"params",Commands[x][cmdParams],20);
+			cache_get_value(x,"description",Commands[x][cmdDesc],150);
+			cache_get_value_int(x,"ulock",Commands[x][cmdLock]);
+			cache_get_value_int(x,"olock",Commands[x][cmdOOnly]);
+			cache_get_value_int(x,"admin",Commands[x][cmdAdmin]);
+			cache_get_value_int(x,"auth",Commands[x][cmdAuth]);
+		}
+	}
+	cache_delete(tmpcache);
 	return 1;
 }
 
@@ -318,13 +396,6 @@ function SavePlayerData(playerid,tmpcolumn[],const tmpvalue[],GLOBAL_TAG_TYPES:.
 	return 1;
 }
 
-function SavePlayerAData(playerid,tmpcolumn[],const tmpvalue[],GLOBAL_TAG_TYPES:...) {
-	new query[128];
-	format(query,sizeof query,"update admin set %s='%e' where username='%d'",tmpcolumn,va_return(tmpvalue,___(3)),PlayerInfo[playerid][pUsername]);
-	if (PlayerInfo[playerid][pLogged]) mysql_tquery(mysql,query,"","");
-	return 1;
-}
-
 function CheckUsername(playerid,username[]) {
 	new idx,tmpstr[128];
 	mysql_format(mysql,tmpstr,sizeof tmpstr,"select * from users where username='%e'",username);
@@ -358,12 +429,13 @@ function OnPlayerLogin(playerid,username[],password[]) {
 		cache_get_value(0,			"name",PlayerInfo[playerid][pName],50);
 		cache_get_value_int(0,		"registered",PlayerInfo[playerid][pRegistered]);
 		cache_get_value_int(0,		"registerlevel",PlayerInfo[playerid][pRegisterLevel]);
-		// cache_get_value_int(0,		"adminlevel",PlayerInfo[playerid][pAdminLevel]);
+		cache_get_value_int(0,		"adminlevel",PlayerInfo[playerid][pAdminLevel]);
+		cache_get_value_int(0,		"admincode",PlayerInfo[playerid][pAdminCode]);
 		cache_get_value_int(0,		"gender",PlayerInfo[playerid][pGender]);
 		cache_get_value_int(0,		"age",PlayerInfo[playerid][pAge]);
 	} else {
 		// invalid password
-		if(PlayerInfo[playerid][pLoginAttempts] == MAX_LOGIN_ATTEMPTS) return KickPlayerEx(playerid,"Login Attempt Reach its Limit, Please Join Other Times");
+		if(PlayerInfo[playerid][pLoginAttempts] == MAX_LOGIN_ATTEMPTS) KickPlayerEx(playerid,"Login Attempt Reach its Limit, Please Join Other Times");
 		PlayerInfo[playerid][pLoginAttempts] ++;
 		new tmpstrs[50];format(tmpstrs,sizeof tmpstrs,"\n\n{ff557a}Invalid Password [%d/%d]",PlayerInfo[playerid][pLoginAttempts],MAX_LOGIN_ATTEMPTS);
 		return CreateDialog(playerid,DIALOG_LOGIN,"",tmpstrs);
@@ -381,26 +453,10 @@ function OnPlayerLogin(playerid,username[],password[]) {
 			// case 5: CreateDialog(playerid,DIALOG_REGISTER_REFERRAL);
 		}
 	} else {
-		mysql_format(mysql,tmpquery,sizeof tmpquery,"select * from admins where username='%e'",username);
-		tmpcache = mysql_query(mysql,tmpquery);
-		cache_get_row_count(idxs);
-		if(idxs) {
-
-			cache_get_value_int(0,		"level",PlayerInfo[playerid][pAdminLevel]);
-			cache_get_value_int(0,		"code",PlayerInfo[playerid][pAdminCode]);
-			cache_get_value_int(0,		"badpoints",PlayerInfo[playerid][pAdminBPoints]);
-
-
-			if(PlayerInfo[playerid][pAdminLevel] > 0) {
-				SFM(playerid,msgAdmin,"You Have Admin Level [%s], For Using Admin Commands Please Use /alogin First",GetAdminName(PlayerInfo[playerid][pAdminLevel]));
-			} else {
-				SFM(playerid,msgWarning,"Your Username Registered As Server Admin But Have No Level Right Now, Please Contact MGMT-Team");
-			}
-		}
-		cache_delete(tmpcache);
+		if(PlayerInfo[playerid][pAdminLevel] > 0) SFM(playerid,msgAdmin,"You're An Admin Of Server Please Use /adminlogin [code] For Auth Your AdminLevel");
 
 		SetPlayerName(playerid,PlayerInfo[playerid][pName]);
-		SetSpawnInfo(playerid,0,0,0.0,0.0,0.0,0.0,0,0,0,0,0,0);
+		SetSpawnInfo(playerid,0,0,103.3730,-221.5822,1.5840,229.8285,0,0,0,0,0,0);
 		SpawnPlayer(playerid);
 	}
 	return 1;
@@ -486,6 +542,7 @@ public OnGameModeInit()
 	else printf("[SQL-Info] MySQl Connected To Server !");
 
 
+	LoadServerCommands();
 	LoadDatabase();
 	
 	return 1;
@@ -838,84 +895,46 @@ public OnPlayerClickPlayer(playerid, clickedplayerid, source)
 
 
 //========---- COMMANDS ----========//
-CMD:alogin(playerid,params[]) {
-
-	new tmpcode;
-	if(sscanf(params,"i",tmpcode)) return SFM(playerid,msgInfo,"U:/alogin [code]");
-	else if(99999 < tmpcode < 100000000) return SFM(playerid,msgError,"Admin-Code Must Have 6-Digits At Least Or 8-Digits At Last");
-	else {
-		if(PlayerInfo[playerid][pAdminAttempts] >= MAX_ADMIN_ATTEMPTS) return KickPlayerEx(playerid,"Username [%s] Have Tryied So Many Time For Admin-Login");
-		else if(tmpcode != PlayerInfo[playerid][pAdminCode]) {
-			PlayerInfo[playerid][pAdminAttempts] ++;
-			return SFM(playerid,msgError,"Incorrect Admin-Code [Attempts %d/%d]",PlayerInfo[playerid][pAdminAttempts],MAX_ADMIN_ATTEMPTS);
-		} else {
-			PlayerInfo[playerid][pAdminLogin] = true;
-			SFM(playerid,msgAdmin,"Your Rank Successfully Authenticated");
-		}
-	}
-	return 1;
-}
-CMD:alogout(playerid,params[]) {
-	if(PlayerInfo[playerid][pAdminLogin] == true) {
-		PlayerInfo[playerid][pAdminLogin] = false;
-		SFM(playerid,msgAdmin,"You're Logged Out From Admin-Auth");
-	} else {
-		SFM(playerid,msgError,"You're Not Logged IN !");
-	}
-	return 1;
-}
-CMD:amake(playerid,params[]) {
-	if(PlayerInfo[playerid][pAdminLevel] < 1) return SFM(playerid,msgAdmin,"You're not An Admin Of This Server");
-	else if(PlayerInfo[playerid][pAdminLevel] < 11) return SFM(playerid,msgAdmin,"You're not In MGMT-Admin Team Of This Server");
-	
-	new tmpid,tmplevel;
-	if(sscanf(params,"ri",tmpid,tmplevel)) return SFM(playerid,msgInfo,"U:/amake [Player Name/ID] [Level | 0:Demote]");
-	else if(tmpid == INVALID_PLAYER_ID) return SFM(playerid,msgError,"Player Is Not Connected To The Server");
-	else if(tmplevel == 0) {
-		PlayerInfo[tmpid][pAdminLevel] = 0;
-		PlayerInfo[tmpid][pAdminCode] = 0;
-		PlayerInfo[tmpid][pAdminBPoints] = 0;
-		PlayerInfo[tmpid][pAdminLogin] = false;
-		new tmpquery[100];
-		mysql_format(mysql,tmpquery,sizeof tmpquery,"delete from admins where username='%s'",PlayerInfo[tmpid][pUsername]);
-		mysql_tquery(mysql,tmpquery,"","");
-		SFM(tmpid,msgAdmin,"Your Rank Have Been Demoted By Admin [%s]",GetName(playerid));
-	} else if(tmplevel > 0) {
-		PlayerInfo[tmpid][pAdminLevel] = tmplevel;
-		PlayerInfo[tmpid][pAdminCode] = 123456;
-		PlayerInfo[tmpid][pAdminBPoints] = 0;
-		new tmpquery[100];
-		mysql_format(mysql,tmpquery,sizeof tmpquery,"insert into admins (username,level,code) value ('%s','%d','123456')",PlayerInfo[tmpid][pUsername],tmplevel);
-		mysql_tquery(mysql,tmpquery,"","");
-		SFM(tmpid,msgAdmin,"You're Now Admin Of Server By [%s], And Obtain Rank [%s]",GetName(playerid),GetAdminName(tmplevel));
-		SFM(tmpid,msgAdmin,"Your Admin-Code Is Set To [123456] By Default, First Use /alogin And Then Use /achcode [New Code]");
-	}
-	return 1;
-}
-CMD:achcode(playerid,params[]) {
-	if(PlayerInfo[playerid][pAdminLevel] < 1) return SFM(playerid,msgAdmin,"You're not An Admin Of This Server");
-	else if(PlayerInfo[playerid][pAdminLogin] != true) return SFM(playerid,msgAdmin,"Your Admin Rank Is Not Authurized Yet");
-
-	new tmpcode1,tmpcode2;
-	if(sscanf(params,"ii",tmpcode1,tmpcode2)) return SFM(playerid,msgInfo,"U:/achcode [current code] [new code]");
-	else if(99999 < tmpcode1 < 100000000) return SFM(playerid,msgError,"Admin-Code Must Have 6-Digits At Least Or 8-Digits At Last");
-	else if(99999 < tmpcode2 < 100000000) return SFM(playerid,msgError,"Admin-Code Must Have 6-Digits At Least Or 8-Digits At Last");
-	else {
-		if(PlayerInfo[playerid][pAdminAttempts] >= MAX_ADMIN_ATTEMPTS) return KickPlayerEx(playerid,"Username [%s] Have Tryied So Many Time For Admin-Login");
-		else if(tmpcode1 != PlayerInfo[playerid][pAdminCode]) {
-			PlayerInfo[playerid][pAdminAttempts] ++;
-			return SFM(playerid,msgError,"Incorrect Admin-Code [Attempts %d/%d]",PlayerInfo[playerid][pAdminAttempts],MAX_ADMIN_ATTEMPTS);
-		} else {
-			// PlayerInfo[playerid][pAdminLogin] = true;
-			PlayerInfo[playerid][pAdminCode] = tmpcode2;
-			SavePlayerAData(playerid,"level","%d",tmpcode2);
-			SFM(playerid,msgAdmin,"Your Admin-Code Successfully Changed To [%d]",tmpcode2);
-		}
-	}
-	return 1;
+CMD:hello(playerid,params[]) {
+	SFM(playerid,cmdAdmin,"Hello");
 }
 //==========-------------==========//
 
 
 //========---- ADMIN COMMANDS ----========//
+CMD:adminlogin(playerid,params[]) {
+	new tmpidx = GetCommandIndex("adminlogin");new tmpcode;
+	if(sscanf(params,Commands[tmpidx][cmdParams],tmpcode)) {
+		return CreateDialog(playerid,DIALOG_ADMIN_LOGIN);
+	} else if(tmpcode < 1000) return SFM(playerid,cmdError,"AdminCode Must Be In Range of 4 To 6 Digits, If Its Upper Or Lower, Please Contact Developers");
+	else if(tmpcode != PlayerInfo[playerid][pAdminCode]) return SFM(playerid,msgError,"Giving Code Is Not Matching With Database, Incorrect Admin Login Code");
+	else {
+		PlayerInfo[playerid][pAdminLogin] = 1;
+		SFM(playerid,msgAdmin,"Successfull, You're Level Authorized As [%s], Enjoy",GetAdminName(PlayerInfo[playerid][pAdminLevel]));
+	}
+	return 1;
+}
+CMD:adminlogout(playerid,params[]) {
+	PlayerInfo[playerid][pAdminLogin] = 0;
+	SFM(playerid,msgAdmin,"Successfully Logout From Admin-Auth");
+	return 1;
+}
+CMD:ahelp(playerid,params[]) {
+	return 1;
+}
+CMD:apanel(playerid,params[]) {
+	return 1;
+}
+CMD:achcode(playerid,params[]) {
+	return 1;
+}
+CMD:achlevel(playerid,params[]) {
+	return 1;
+}
+CMD:amkadmin(playerid,params[]) {
+	return 1;
+}
+CMD:armadmin(playerid,params[]) {
+	return 1;
+}
 //==========-------------==========//
