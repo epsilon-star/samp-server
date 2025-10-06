@@ -1,7 +1,7 @@
 {
     // "pawn.compilerPath": "${workspaceFolder}\\pawno",
-    "files.autoSave": "afterDelay",
-    "files.autoSaveDelay": 500,
+    // "files.autoSave": "afterDelay",
+    // "files.autoSaveDelay": 500,
     "pawn.compilerPath": "D:\\Project\\Servers\\SA-MP Server\\samp-server\\pawno",
     "pawn.compileOptions": [
         "-d2",

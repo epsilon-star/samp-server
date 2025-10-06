@@ -248,7 +248,7 @@ stock GetAdminName(level) {
 function LoadDatabase() {
 	printf("/============================\\");
 	printf("- Loading server Database\n");
-	new Cache:tmpcache,idxs;
+	new Cache:tmpcache,idxs=0,time=gettime();
 
 	//users
 	tmpcache = mysql_query(mysql,"select * from users order by id asc");
@@ -271,10 +271,12 @@ function LoadDatabase() {
 	printf("[ShadowTeam] Total Server Admins [-%d-]",idxs);
 
 	// commands
+	LoadCommands();
 	tmpcache = mysql_query(mysql,"select * from commands order by cmd asc");
 	cache_get_row_count(idxs);
 	printf("[ShadowTeam] Total Server Defined Commands [-%d-]",idxs);
-	
+
+	printf("\nLoading Time %d-s, Current Time %d-s",gettime()-time,gettime());
 	// delete the cache
 	cache_delete(tmpcache);
 	printf("\\============================/");
@@ -594,7 +596,6 @@ public OnGameModeInit()
 
 
 	LoadDatabase();
-	LoadCommands();
 	
 	return 1;
 }
